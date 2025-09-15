@@ -35,7 +35,7 @@ func main() {
 	fmt.Printf("Peer B listening on %s\n", conn.LocalAddr().String())
 	fmt.Printf("Will send messages to Peer A at %s\n", remoteAddr.String())
 
-	// Channel to signal when the "Goodjob" message is received
+	// Channel to signal when the "Finish" response has been sent
 	done := make(chan bool)
 
 	// Start a goroutine to listen for incoming messages
@@ -49,9 +49,19 @@ func main() {
 			}
 			message := string(buffer[:n])
 			fmt.Printf("Received from %s: %s\n", addr, message)
-			if message == "Goodjob" {
-				fmt.Println("\n--- Goodjob received! ---")
-				done <- true
+			if message == "Help me" {
+				// Respond with Finish to signal completion
+				fmt.Println("Sending 'Finish' in response...")
+				if _, err := conn.WriteToUDP([]byte("Finish"), remoteAddr); err != nil {
+					log.Printf("Error sending 'Finish': %v", err)
+				} else {
+					// Signal completion after sending response
+					select {
+					case done <- true:
+					default:
+					}
+					return
+				}
 			}
 		}
 	}()
@@ -69,12 +79,12 @@ func main() {
 
 	fmt.Println("Punching packets sent. Waiting for messages...")
 
-	// Wait for the "Goodjob" message or timeout
+	// Wait until we've sent the completion response (Finish) or timeout
 	select {
 	case <-done:
 		fmt.Println("Successfully finished.")
 		os.Exit(0)
-	case <-time.After(10 * time.Second):
-		log.Fatalf("Timeout: Did not receive 'Goodjob' message after 10 seconds.")
+	case <-time.After(15 * time.Second):
+		log.Fatalf("Timeout: Did not receive 'Help me' message within 15 seconds.")
 	}
 }
