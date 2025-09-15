@@ -143,10 +143,10 @@ func main() {
 				}
 				fi := fileInfo
 				meta := map[string]interface{}{
-					"name":     filepath.Base(sendPath),
-					"size":     fi.Size(),
-					"ts":       time.Now().Unix(),
-					"ver":      2,
+					"name": filepath.Base(sendPath),
+					"size": fi.Size(),
+					"ts":   time.Now().Unix(),
+					"ver":  2,
 					"channels": channels,
 				}
 				metaBytes, _ := json.Marshal(meta)
