@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	// peerAAddress = "172.29.1.1:8080"
-	peerAAddress = "192.168.1.18:8080"
-	localPort    = ":8080"
+	peerAAddress = "172.29.1.1:8080"
+	// peerAAddress = "192.168.1.18:8080"
+	localPort = ":8080"
 )
 
 func main() {
@@ -50,13 +50,13 @@ func main() {
 			}
 			message := string(buffer[:n])
 			fmt.Printf("Received from %s: %s\n", addr, message)
-			if message == "Help me" {
-				// Respond with Finish to signal completion
+			// Ignore punch packets; respond 'Finish' to any other payload
+			if message != "punch" {
 				fmt.Println("Sending 'Finish' in response...")
-				if _, err := conn.WriteToUDP([]byte("Finish"), remoteAddr); err != nil {
+				// Reply to the actual sender address to be NAT-friendly
+				if _, err := conn.WriteToUDP([]byte("Finish"), addr); err != nil {
 					log.Printf("Error sending 'Finish': %v", err)
 				} else {
-					// Signal completion after sending response
 					select {
 					case done <- true:
 					default:
@@ -86,6 +86,6 @@ func main() {
 		fmt.Println("Successfully finished.")
 		os.Exit(0)
 	case <-time.After(15 * time.Second):
-		log.Fatalf("Timeout: Did not receive 'Help me' message within 15 seconds.")
+		log.Fatalf("Timeout: Did not receive a non-'punch' message within 15 seconds.")
 	}
 }

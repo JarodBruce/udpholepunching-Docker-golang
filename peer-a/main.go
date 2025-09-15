@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	// peerBAddress = "172.29.1.2:8080"
-	peerBAddress = "192.168.1.18:8080"
-	localPort    = ":8080"
+	peerBAddress = "172.29.1.2:8080"
+	// peerBAddress = "192.168.1.18:8080"
+	localPort = ":8080"
 )
 
 func main() {
@@ -72,10 +72,13 @@ func main() {
 	}
 
 	// Send the "Help me" message
-	fmt.Println("Sending 'Help me' message...")
-	_, err = conn.WriteToUDP([]byte("Help me"), remoteAddr)
+	// Manage outgoing strings in variables
+	helpMsg := "~~~"
+
+	fmt.Printf("Sending %q message...\n", helpMsg)
+	_, err = conn.WriteToUDP([]byte(helpMsg), remoteAddr)
 	if err != nil {
-		log.Fatalf("Failed to send 'Help me' message: %v", err)
+		log.Fatalf("Failed to send %q message: %v", helpMsg, err)
 	}
 
 	// Wait for the "Finish" message or timeout
