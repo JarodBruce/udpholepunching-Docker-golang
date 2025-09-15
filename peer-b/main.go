@@ -25,14 +25,6 @@ const (
 )
 
 func main() {
-	serverIP := "127.0.0.1"
-	serverPort := "10002"
-
-	serverAddr, err := net.ResolveUDPAddr("udp", serverIP+":"+serverPort)
-	if err != nil {
-		log.Fatalf("Failed to resolve server address: %v", err)
-	}
-
 	// Resolve local and remote addresses
 	bindAddr := defaultLocal
 	if v := os.Getenv("LOCAL_ADDR"); v != "" {
