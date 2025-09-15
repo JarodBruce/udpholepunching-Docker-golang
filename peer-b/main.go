@@ -37,6 +37,11 @@ func main() {
 		if strings.HasPrefix(bindAddr, ":") {
 			bindAddr = "127.0.0.1" + bindAddr
 		}
+	} else {
+		// Default to IPv4 for Docker networks unless explicitly binding to IPv6
+		if bindAddr == ":8080" {
+			bindAddr = "0.0.0.0:8080"
+		}
 	}
 	localAddr, err := net.ResolveUDPAddr("udp", bindAddr)
 	if err != nil {
@@ -112,6 +117,76 @@ func main() {
 		var haveHeader bool
 		var hdrOff uint64
 		var hdrLen uint32
+		// Add buffering for data received before metadata
+		var dataBuffer []webrtc.DataChannelMessage
+
+		// Helper function to process data messages
+		var processDataMessage func(webrtc.DataChannelMessage, string)
+		processDataMessage = func(msg webrtc.DataChannelMessage, label string) {
+			if multiMode {
+				// Expect header then payload
+				b := msg.Data
+				if !haveHeader {
+					if len(b) < 12 {
+						log.Printf("Peer B: header too small on %s: %d", label, len(b))
+						return
+					}
+					hdrOff = binary.LittleEndian.Uint64(b[0:8])
+					hdrLen = binary.LittleEndian.Uint32(b[8:12])
+					// if there's inline payload as well
+					if len(b) > 12 {
+						payload := b[12:]
+						if int(hdrLen) != len(payload) {
+							log.Printf("Peer B: payload length mismatch: got %d expect %d", len(payload), hdrLen)
+						}
+						if _, err := file.WriteAt(payload, int64(hdrOff)); err != nil {
+							log.Printf("Peer B: writeAt error: %v", err)
+							return
+						}
+						atomic.AddInt64(&recvTotal, int64(len(payload)))
+						printRecvProgress("ALL", atomic.LoadInt64(&recvTotal), totalExpected, start)
+						haveHeader = false
+						return
+					}
+					haveHeader = true
+					return
+				}
+				// have header: this is payload
+				if int(hdrLen) != len(b) {
+					// best effort: write what we received
+					// In practice sender sends exact sizes
+				}
+				if _, err := file.WriteAt(b, int64(hdrOff)); err != nil {
+					log.Printf("Peer B: writeAt error: %v", err)
+					return
+				}
+				atomic.AddInt64(&recvTotal, int64(len(b)))
+				printRecvProgress("ALL", atomic.LoadInt64(&recvTotal), totalExpected, start)
+				haveHeader = false
+			} else {
+				// v1 sequential receive (single channel)
+				n, werr := file.Write(msg.Data)
+				if werr != nil {
+					log.Printf("Peer B: write error: %v", werr)
+					return
+				}
+				atomic.AddInt64(&recvTotal, int64(n))
+				printRecvProgress(label, atomic.LoadInt64(&recvTotal), totalExpected, start)
+			}
+
+			// completion check
+			if totalExpected > 0 && atomic.LoadInt64(&recvTotal) >= totalExpected {
+				closeOnce.Do(func() {
+					fmt.Println("\nPeer B: File received completely. Closing...")
+					if file != nil {
+						_ = file.Close()
+						file = nil
+					}
+					_ = d.Close()
+					_ = pc.Close()
+				})
+			}
+		}
 
 		d.OnOpen(func() {
 			fmt.Println("Peer B: DataChannel open. Waiting for metadata...")
@@ -161,6 +236,11 @@ func main() {
 						fmt.Printf("Peer B: Metadata received. Name=%s Size=%d bytes -> %s (channels=%d, ver=%d)\n", safeName, meta.Size, fp, meta.Channels, meta.Ver)
 						// Tell sender we're ready for v2
 						_ = d.SendText("READY")
+						// Process any buffered data
+						for _, bufferedMsg := range dataBuffer {
+							processDataMessage(bufferedMsg, d.Label())
+						}
+						dataBuffer = nil // Clear buffer
 					})
 					return
 				}
@@ -168,90 +248,28 @@ func main() {
 				return
 			}
 
+			// Buffer data if file not ready yet
 			if file == nil {
-				fmt.Println("Peer B: Error: file not open yet.")
+				dataBuffer = append(dataBuffer, msg)
+				if len(dataBuffer) > 1000 { // Prevent memory overflow
+					dataBuffer = dataBuffer[500:] // Keep only recent half
+				}
 				return
 			}
 
-			if multiMode {
-				// Expect header then payload
-				b := msg.Data
-				if !haveHeader {
-					if len(b) < 12 {
-						log.Printf("Peer B: header too small on %s: %d", d.Label(), len(b))
-						return
-					}
-					hdrOff = binary.LittleEndian.Uint64(b[0:8])
-					hdrLen = binary.LittleEndian.Uint32(b[8:12])
-					// if there's inline payload as well
-					if len(b) > 12 {
-						payload := b[12:]
-						if int(hdrLen) != len(payload) {
-							log.Printf("Peer B: payload length mismatch: got %d expect %d", len(payload), hdrLen)
-						}
-						if _, err := file.WriteAt(payload, int64(hdrOff)); err != nil {
-							log.Printf("Peer B: writeAt error: %v", err)
-							return
-						}
-						atomic.AddInt64(&recvTotal, int64(len(payload)))
-						printRecvProgress("ALL", atomic.LoadInt64(&recvTotal), totalExpected, start)
-						haveHeader = false
-						return
-					}
-					haveHeader = true
-					return
-				}
-				// have header: this is payload
-				if int(hdrLen) != len(b) {
-					// best effort: write what we received
-					// In practice sender sends exact sizes
-				}
-				if _, err := file.WriteAt(b, int64(hdrOff)); err != nil {
-					log.Printf("Peer B: writeAt error: %v", err)
-					return
-				}
-				atomic.AddInt64(&recvTotal, int64(len(b)))
-				printRecvProgress("ALL", atomic.LoadInt64(&recvTotal), totalExpected, start)
-				haveHeader = false
-			} else {
-				// v1 sequential receive (single channel)
-				// keep a simple buffered writer in this branch
-				// open a buffered writer lazily per-channel
-				// (use a local writer only on the first channel that writes)
-				// Simple approach: write directly as append
-				n, werr := file.Write(msg.Data)
-				if werr != nil {
-					log.Printf("Peer B: write error: %v", werr)
-					return
-				}
-				atomic.AddInt64(&recvTotal, int64(n))
-				printRecvProgress(d.Label(), atomic.LoadInt64(&recvTotal), totalExpected, start)
-			}
-
-			// completion check
-			if totalExpected > 0 && atomic.LoadInt64(&recvTotal) >= totalExpected {
-				closeOnce.Do(func() {
-					fmt.Println("\nPeer B: File received completely. Closing...")
-					if file != nil {
-						_ = file.Close()
-						file = nil
-					}
-					_ = d.Close()
-					_ = pc.Close()
-				})
-			}
+			processDataMessage(msg, d.Label())
 		})
 	})
 
 	// Receive session ID
-	sid, from, err := waitForPrefix(conn, "ID:", 30*time.Second)
+	sid, from, err := waitForPrefix(conn, "ID:", 60*time.Second)
 	if err != nil {
 		log.Fatalf("Peer B: waiting ID: %v", err)
 	}
 	fmt.Printf("Peer B: Received session ID %s from %s\n", sid, from.String())
 
 	// Receive OFFER via UDP
-	offerStr, from2, err := waitForPrefix(conn, "OFFER:", 30*time.Second)
+	offerStr, from2, err := waitForPrefix(conn, "OFFER:", 60*time.Second)
 	if err != nil {
 		log.Fatalf("Peer B: waiting OFFER: %v", err)
 	}
@@ -300,10 +318,12 @@ func main() {
 
 func punch(conn *net.UDPConn, remote *net.UDPAddr) {
 	fmt.Println("Peer B: Sending punching packets...")
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ {
 		_, _ = conn.WriteToUDP([]byte("punch"), remote)
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
+	// Add extra delay to ensure proper hole punching
+	time.Sleep(500 * time.Millisecond)
 }
 
 func waitForPrefix(conn *net.UDPConn, prefix string, timeout time.Duration) (string, *net.UDPAddr, error) {

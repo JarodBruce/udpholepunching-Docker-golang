@@ -46,6 +46,11 @@ func main() {
 		if strings.HasPrefix(bindAddr, ":") {
 			bindAddr = "127.0.0.1" + bindAddr
 		}
+	} else {
+		// Default to IPv4 for Docker networks unless explicitly binding to IPv6
+		if bindAddr == ":8080" {
+			bindAddr = "0.0.0.0:8080"
+		}
 	}
 	localAddr, err := net.ResolveUDPAddr("udp", bindAddr)
 	if err != nil {
@@ -184,7 +189,7 @@ func main() {
 	fmt.Println("Peer A: Sent OFFER via UDP")
 
 	// Wait for ANSWER via UDP and apply
-	answerStr, from, err := waitForPrefix(conn, "ANSWER:", 30*time.Second)
+	answerStr, from, err := waitForPrefix(conn, "ANSWER:", 60*time.Second)
 	if err != nil {
 		log.Fatalf("Peer A: waiting ANSWER: %v", err)
 	}
@@ -235,10 +240,12 @@ func main() {
 
 func punch(conn *net.UDPConn, remote *net.UDPAddr) {
 	fmt.Println("Peer A: Sending punching packets...")
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ {
 		_, _ = conn.WriteToUDP([]byte("punch"), remote)
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
+	// Add extra delay to ensure peer B is ready
+	time.Sleep(500 * time.Millisecond)
 }
 
 func waitForPrefix(conn *net.UDPConn, prefix string, timeout time.Duration) (string, *net.UDPAddr, error) {
@@ -261,12 +268,14 @@ func waitForPrefix(conn *net.UDPConn, prefix string, timeout time.Duration) (str
 }
 
 func mustWriteUDP(conn *net.UDPConn, addr *net.UDPAddr, s string) {
-	// Small helper with simple retry
-	for i := 0; i < 3; i++ {
+	// Enhanced retry with exponential backoff
+	for i := 0; i < 5; i++ {
 		if _, err := conn.WriteToUDP([]byte(s), addr); err == nil {
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		backoff := time.Duration(i*i*50+50) * time.Millisecond
+		fmt.Printf("Peer A: UDP write retry %d after %v\n", i+1, backoff)
+		time.Sleep(backoff)
 	}
 }
 

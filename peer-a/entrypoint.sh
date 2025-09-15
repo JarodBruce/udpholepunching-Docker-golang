@@ -12,6 +12,9 @@ iptables -A INPUT -i lo -j ACCEPT
 # This is crucial for the return traffic of the UDP hole punching to be accepted.
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
+# Allow NEW UDP connections on port 8080 for initial hole punching
+iptables -A INPUT -p udp --dport 8080 -m conntrack --ctstate NEW -j ACCEPT
+
 # List the current iptables rules for verification.
 echo "Current iptables rules:"
 iptables -L
