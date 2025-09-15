@@ -33,26 +33,48 @@ const (
 )
 
 func main() {
-	serverIP := "127.0.0.1"
-	serverPort := "10001"
-
-	serverAddr, err := net.ResolveUDPAddr("udp", serverIP+":"+serverPort)
+	bindAddr := defaultLocal
+	if v := os.Getenv("LOCAL_ADDR"); v != "" {
+		bindAddr = v
+	} else if v := os.Getenv("LOCAL_PORT"); v != "" {
+		bindAddr = ":" + v
+	}
+	if lb := os.Getenv("BIND_LOCALHOST_ONLY"); lb == "1" || strings.EqualFold(lb, "true") {
+		if strings.HasPrefix(bindAddr, ":") {
+			bindAddr = "127.0.0.1" + bindAddr
+		}
+	} else {
+		if bindAddr == ":8080" {
+			bindAddr = "0.0.0.0:8080"
+		}
+	}
+	localAddr, err := net.ResolveUDPAddr("udp", bindAddr)
 	if err != nil {
-		log.Fatalf("Failed to resolve server address: %v", err)
+		log.Fatalf("Failed to resolve local address: %v", err)
+	}
+
+	remoteAddrStr := peerBAddress
+	if ifEnv, ok := os.LookupEnv("REMOTE_ADDR"); ok && ifEnv != "" {
+		remoteAddrStr = ifEnv
+	}
+
+	remoteAddr, err := net.ResolveUDPAddr("udp", remoteAddrStr)
+	if err != nil {
+		log.Fatalf("Failed to resolve remote address: %v", err)
 	}
 
 	// Listen on the local UDP port
-	conn, err := net.ListenUDP("udp", serverAddr)
+	conn, err := net.ListenUDP("udp", localAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen on UDP port: %v", err)
 	}
 	defer conn.Close()
 
 	fmt.Printf("Peer A listening on %s\n", conn.LocalAddr().String())
-	fmt.Printf("Will send messages to Peer B at %s\n", serverAddr.String())
+	fmt.Printf("Will send messages to Peer B at %s\n", remoteAddr.String())
 
 	// Start punching to create/refresh NAT bindings
-	punch(conn, serverAddr)
+	punch(conn, remoteAddr)
 
 	// Prepare WebRTC peer connection
 	config := webrtc.Configuration{
@@ -154,11 +176,11 @@ func main() {
 
 	// Send session ID first via UDP
 	sid := uuid.NewString()
-	mustWriteUDP(conn, serverAddr, fmt.Sprintf("ID:%s", sid))
+	mustWriteUDP(conn, remoteAddr, fmt.Sprintf("ID:%s", sid))
 	fmt.Printf("Peer A: Sent session ID %s\n", sid)
 
 	// Send the OFFER via UDP
-	mustWriteUDP(conn, serverAddr, "OFFER:"+encOffer)
+	mustWriteUDP(conn, remoteAddr, "OFFER:"+encOffer)
 	fmt.Println("Peer A: Sent OFFER via UDP")
 
 	// Wait for ANSWER via UDP and apply

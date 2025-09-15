@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -52,17 +51,6 @@ func main() {
 	remoteAddrStr := peerAAddress
 	if ifEnv, ok := os.LookupEnv("REMOTE_ADDR"); ok && ifEnv != "" {
 		remoteAddrStr = ifEnv
-	}
-	// Only allow interactive input if not disabled and not in a container environment
-	promptDisabled := os.Getenv("PROMPT_DISABLE") == "1" || strings.EqualFold(os.Getenv("PROMPT_DISABLE"), "true")
-	if !promptDisabled && isInteractive() && os.Getenv("CONTAINER") == "" && os.Getenv("DOCKER") == "" {
-		fmt.Printf("Enter remote UDP address for Peer A (current: %s) and press Enter, or leave blank to keep: ", remoteAddrStr)
-		reader := bufio.NewReader(os.Stdin)
-		line, _ := reader.ReadString('\n')
-		line = strings.TrimSpace(line)
-		if line != "" {
-			remoteAddrStr = line
-		}
 	}
 	remoteAddr, err := net.ResolveUDPAddr("udp", remoteAddrStr)
 	if err != nil {
@@ -121,8 +109,7 @@ func main() {
 		var dataBuffer []webrtc.DataChannelMessage
 
 		// Helper function to process data messages
-		var processDataMessage func(webrtc.DataChannelMessage, string)
-		processDataMessage = func(msg webrtc.DataChannelMessage, label string) {
+		processDataMessage := func(msg webrtc.DataChannelMessage, label string) {
 			if multiMode {
 				// Expect header then payload
 				b := msg.Data
@@ -345,15 +332,6 @@ func waitForPrefix(conn *net.UDPConn, prefix string, timeout time.Duration) (str
 	}
 }
 
-func mustWriteUDP(conn *net.UDPConn, addr *net.UDPAddr, s string) {
-	for i := 0; i < 3; i++ {
-		if _, err := conn.WriteToUDP([]byte(s), addr); err == nil {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
 func encode(obj interface{}) (string, error) {
 	b, err := json.Marshal(obj)
 	if err != nil {
@@ -375,15 +353,6 @@ func preview(s string) string {
 		return s[:64] + "..."
 	}
 	return s
-}
-
-// isInteractive returns true if stdin appears to be a terminal
-func isInteractive() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
 func printRecvProgress(label string, received, total int64, start time.Time) {
