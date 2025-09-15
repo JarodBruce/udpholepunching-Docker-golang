@@ -19,7 +19,7 @@ import (
 
 const (
 	// peerAAddress = "172.29.1.1:8080"
-	peerAAddress = "192.168.1.18:8080"
+	peerAAddress = "192.168.1.9:8080"
 	defaultLocal = ":8080"
 )
 
