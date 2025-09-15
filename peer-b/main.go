@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -36,12 +37,12 @@ func main() {
 	fmt.Printf("Peer B listening on %s\n", conn.LocalAddr().String())
 	fmt.Printf("Will send messages to Peer A at %s\n", remoteAddr.String())
 
-	// Channel to signal when the "Finish" response has been sent
+	// Channel to signal when 'finish' has been received
 	done := make(chan bool)
 
 	// Start a goroutine to listen for incoming messages
 	go func() {
-		buffer := make([]byte, 1024)
+		buffer := make([]byte, 262144)
 		for {
 			n, addr, err := conn.ReadFromUDP(buffer)
 			if err != nil {
@@ -50,19 +51,28 @@ func main() {
 			}
 			message := string(buffer[:n])
 			fmt.Printf("Received from %s: %s\n", addr, message)
-			// Ignore punch packets; respond 'Finish' to any other payload
-			if message != "punch" {
-				fmt.Println("Sending 'Finish' in response...")
-				// Reply to the actual sender address to be NAT-friendly
-				if _, err := conn.WriteToUDP([]byte("Finish"), addr); err != nil {
-					log.Printf("Error sending 'Finish': %v", err)
-				} else {
-					select {
-					case done <- true:
-					default:
-					}
-					return
+			// If 'finish' received, signal completion
+			if strings.EqualFold(message, "finish") {
+				select {
+				case done <- true:
+				default:
 				}
+				return
+			}
+			// Ignore punch packets; respond ack to any other payload
+			if message == "punch" {
+				continue
+			}
+			// Only accept SNY-prefixed messages for step 1; otherwise abort
+			if !strings.HasPrefix(message, "SNY:") {
+				log.Fatalf("Protocol violation: first non-punch message must start with 'SNY:'. Aborting.")
+				return
+			}
+			// Send SNY:ack back
+			ack := "SNY:ack"
+			fmt.Println("Sending ack in response...")
+			if _, err := conn.WriteToUDP([]byte(ack), addr); err != nil {
+				log.Printf("Error sending ack: %v", err)
 			}
 		}
 	}()
@@ -80,12 +90,12 @@ func main() {
 
 	fmt.Println("Punching packets sent. Waiting for messages...")
 
-	// Wait until we've sent the completion response (Finish) or timeout
+	// Wait until we've received 'finish' or timeout
 	select {
 	case <-done:
 		fmt.Println("Successfully finished.")
 		os.Exit(0)
 	case <-time.After(15 * time.Second):
-		log.Fatalf("Timeout: Did not receive a non-'punch' message within 15 seconds.")
+		log.Fatalf("Timeout: Did not receive 'finish' within 15 seconds.")
 	}
 }

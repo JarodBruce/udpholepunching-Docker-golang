@@ -20,6 +20,36 @@
 				"$gcc"
 			],
 			"group": "build"
+		},
+		{
+			"label": "docker compose up --build (3-step handshake)",
+			"type": "shell",
+			"command": "docker compose up --build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "docker compose up --build (SNY three-step)",
+			"type": "shell",
+			"command": "docker compose up --build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "docker compose up --build (fix REMOTE_ADDR)",
+			"type": "shell",
+			"command": "docker compose up --build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
 		}
 	]
 }

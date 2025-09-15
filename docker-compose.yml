@@ -8,6 +8,8 @@ services:
     networks:
       p2p-net:
         ipv4_address: 172.29.1.1
+    environment:
+      - REMOTE_ADDR=172.29.1.2:8080
     tty: true
 
   peer-b:
