@@ -20,7 +20,7 @@ import (
 const (
 	// peerBAddress = "172.29.1.2:8080"
 	peerBAddress = "192.168.1.18:8080"
-	localPort    = ":8080"
+	defaultLocal = ":8080"
 )
 
 const (
@@ -30,7 +30,13 @@ const (
 
 func main() {
 	// Resolve local and remote addresses
-	localAddr, err := net.ResolveUDPAddr("udp", localPort)
+	bindAddr := defaultLocal
+	if v := os.Getenv("LOCAL_ADDR"); v != "" {
+		bindAddr = v
+	} else if v := os.Getenv("LOCAL_PORT"); v != "" {
+		bindAddr = ":" + v
+	}
+	localAddr, err := net.ResolveUDPAddr("udp", bindAddr)
 	if err != nil {
 		log.Fatalf("Failed to resolve local address: %v", err)
 	}

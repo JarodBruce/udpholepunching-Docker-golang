@@ -18,12 +18,18 @@ import (
 const (
 	// peerAAddress = "172.29.1.1:8080"
 	peerAAddress = "192.168.1.18:8080"
-	localPort    = ":8080"
+	defaultLocal = ":8080"
 )
 
 func main() {
 	// Resolve local and remote addresses
-	localAddr, err := net.ResolveUDPAddr("udp", localPort)
+	bindAddr := defaultLocal
+	if v := os.Getenv("LOCAL_ADDR"); v != "" {
+		bindAddr = v
+	} else if v := os.Getenv("LOCAL_PORT"); v != "" {
+		bindAddr = ":" + v
+	}
+	localAddr, err := net.ResolveUDPAddr("udp", bindAddr)
 	if err != nil {
 		log.Fatalf("Failed to resolve local address: %v", err)
 	}
@@ -196,9 +202,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("Peer B: encode answer: %v", err)
 	}
-	// Send ANSWER via UDP
-	mustWriteUDP(conn, remoteAddr, "ANSWER:"+encAnswer)
-	fmt.Println("Peer B: Sent ANSWER via UDP")
+	// Send ANSWER via UDP back to the observed sender address of the OFFER
+	if _, err := conn.WriteToUDP([]byte("ANSWER:"+encAnswer), from2); err != nil {
+		log.Printf("Peer B: failed sending ANSWER to %s: %v", from2.String(), err)
+	} else {
+		fmt.Printf("Peer B: Sent ANSWER via UDP to %s\n", from2.String())
+	}
 
 	// Keep the process alive until connection finishes
 	done := make(chan struct{})
