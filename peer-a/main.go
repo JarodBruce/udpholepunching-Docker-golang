@@ -8,7 +8,8 @@ import (
 )
 
 const (
-	peerBAddress = "172.29.1.2:8080"
+	// peerBAddress = "172.29.1.2:8080"
+	peerBAddress = "192.168.1.18:8080"
 	localPort    = ":8080"
 )
 
