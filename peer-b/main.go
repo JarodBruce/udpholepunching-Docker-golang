@@ -15,13 +15,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"runtime"
-
 	"github.com/pion/webrtc/v3"
 )
 
 const (
-	peerAAddress = "172.29.1.1:8080"
+	// peerAAddress = "172.29.1.1:8080"
+	peerAAddress = "192.168.1.18:8080"
 	defaultLocal = ":8080"
 )
 
@@ -34,14 +33,7 @@ func main() {
 		bindAddr = ":" + v
 	}
 	// Optional: bind only to localhost to avoid Windows firewall prompts
-	// On Windows, default to localhost unless explicitly disabled
-	enableLocalhostOnly := false
-	if lb, ok := os.LookupEnv("BIND_LOCALHOST_ONLY"); ok {
-		enableLocalhostOnly = (lb == "1" || strings.EqualFold(lb, "true"))
-	} else if runtime.GOOS == "windows" {
-		enableLocalhostOnly = true
-	}
-	if enableLocalhostOnly {
+	if lb := os.Getenv("BIND_LOCALHOST_ONLY"); lb == "1" || strings.EqualFold(lb, "true") {
 		if strings.HasPrefix(bindAddr, ":") {
 			bindAddr = "127.0.0.1" + bindAddr
 		}
@@ -56,7 +48,7 @@ func main() {
 	if ifEnv, ok := os.LookupEnv("REMOTE_ADDR"); ok && ifEnv != "" {
 		remoteAddrStr = ifEnv
 	}
-	if isInteractive() && !isPromptDisabled() {
+	if isInteractive() {
 		fmt.Printf("Enter remote UDP address for Peer A (current: %s) and press Enter, or leave blank to keep: ", remoteAddrStr)
 		reader := bufio.NewReader(os.Stdin)
 		line, _ := reader.ReadString('\n')
@@ -81,20 +73,7 @@ func main() {
 	fmt.Printf("Will send messages to Peer A at %s\n", remoteAddr.String())
 
 	// Start punching to create/refresh NAT bindings
-	// On Windows, disable punching by default to reduce AV heuristics
-	enablePunch := true
-	if dp, ok := os.LookupEnv("DISABLE_PUNCH"); ok {
-		if dp == "1" || strings.EqualFold(dp, "true") {
-			enablePunch = false
-		}
-	} else if runtime.GOOS == "windows" {
-		enablePunch = false
-	}
-	if enablePunch {
-		punch(conn, remoteAddr)
-	} else {
-		fmt.Println("Peer B: UDP punching disabled (DISABLE_PUNCH or Windows default)")
-	}
+	punch(conn, remoteAddr)
 
 	// Prepare WebRTC peer connection (Answerer)
 	config := webrtc.Configuration{
@@ -383,14 +362,6 @@ func isInteractive() bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
-}
-
-// isPromptDisabled returns true if prompts should be skipped
-func isPromptDisabled() bool {
-	if pd, ok := os.LookupEnv("PROMPT_DISABLE"); ok {
-		return pd == "1" || strings.EqualFold(pd, "true")
-	}
-	return false
 }
 
 func printRecvProgress(label string, received, total int64, start time.Time) {
