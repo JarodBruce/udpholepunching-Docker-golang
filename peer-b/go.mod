@@ -1,8 +1,7 @@
-module peer-a
+module peer-b
 
 go 1.22
 
 require (
-	github.com/google/uuid v1.6.0
 	github.com/pion/webrtc/v3 v3.3.6
 )

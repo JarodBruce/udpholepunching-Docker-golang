@@ -10,7 +10,10 @@ services:
         ipv4_address: 172.29.1.1
     environment:
       - REMOTE_ADDR=172.29.1.2:8080
+      - SEND_FILE=/data/big.txt
     tty: true
+    volumes:
+      - ./data:/data
 
   peer-b:
     build: ./peer-b
@@ -20,6 +23,11 @@ services:
       p2p-net:
         ipv4_address: 172.29.1.2
     tty: true
+    environment:
+      - REMOTE_ADDR=172.29.1.1:8080
+      - RECV_DIR=/data/received
+    volumes:
+      - ./data:/data
 
 networks:
   p2p-net:

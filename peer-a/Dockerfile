@@ -7,9 +7,13 @@ RUN apk add --no-cache iptables
 # Set the working directory
 WORKDIR /usr/src/app
 
+# Copy go.mod and sources, then tidy to create go.sum
+COPY go.mod .
+COPY main.go .
+RUN go mod tidy
+
 # Copy the entrypoint script and Go source code
 COPY entrypoint.sh .
-COPY main.go .
 
 # Make the entrypoint script executable
 RUN chmod +x entrypoint.sh
