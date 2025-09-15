@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	// peerAAddress = "172.29.1.1:8080"
-	peerAAddress = "192.168.1.18:8080"
+	peerAAddress = "172.29.1.1:8080"
+	// peerAAddress = "192.168.1.18:8080"
 	defaultLocal = ":8080"
 )
 
@@ -48,7 +48,9 @@ func main() {
 	if ifEnv, ok := os.LookupEnv("REMOTE_ADDR"); ok && ifEnv != "" {
 		remoteAddrStr = ifEnv
 	}
-	if isInteractive() {
+	// Only allow interactive input if not disabled and not in a container environment
+	promptDisabled := os.Getenv("PROMPT_DISABLE") == "1" || strings.EqualFold(os.Getenv("PROMPT_DISABLE"), "true")
+	if !promptDisabled && isInteractive() && os.Getenv("CONTAINER") == "" && os.Getenv("DOCKER") == "" {
 		fmt.Printf("Enter remote UDP address for Peer A (current: %s) and press Enter, or leave blank to keep: ", remoteAddrStr)
 		reader := bufio.NewReader(os.Stdin)
 		line, _ := reader.ReadString('\n')
