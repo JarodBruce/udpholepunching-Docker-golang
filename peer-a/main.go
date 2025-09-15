@@ -22,8 +22,7 @@ import (
 )
 
 const (
-	// peerBAddress = "172.29.1.2:8080"
-	peerBAddress = "192.168.1.18:8080"
+	peerBAddress = "172.29.1.2:8080"
 	defaultLocal = ":8080"
 )
 
@@ -52,10 +51,20 @@ func main() {
 		log.Fatalf("Failed to resolve local address: %v", err)
 	}
 
-	// Allow overriding remote address via environment variable
+	// Allow overriding remote address via environment variable or interactive prompt
 	remoteAddrStr := peerBAddress
 	if ifEnv, ok := os.LookupEnv("REMOTE_ADDR"); ok && ifEnv != "" {
 		remoteAddrStr = ifEnv
+	}
+	// Interactive prompt if connected to TTY
+	if isInteractive() {
+		fmt.Printf("Enter remote UDP address for Peer B (current: %s) and press Enter, or leave blank to keep: ", remoteAddrStr)
+		reader := bufio.NewReader(os.Stdin)
+		line, _ := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line != "" {
+			remoteAddrStr = line
+		}
 	}
 
 	remoteAddr, err := net.ResolveUDPAddr("udp", remoteAddrStr)
@@ -291,6 +300,15 @@ func preview(s string) string {
 		return s[:64] + "..."
 	}
 	return s
+}
+
+// isInteractive returns true if stdin appears to be a terminal
+func isInteractive() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
 // sendFile streams the file to the DataChannel with simple backpressure

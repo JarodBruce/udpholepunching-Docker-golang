@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -18,8 +19,7 @@ import (
 )
 
 const (
-	// peerAAddress = "172.29.1.1:8080"
-	peerAAddress = "192.168.1.18:8080"
+	peerAAddress = "172.29.1.1:8080"
 	defaultLocal = ":8080"
 )
 
@@ -42,10 +42,19 @@ func main() {
 		log.Fatalf("Failed to resolve local address: %v", err)
 	}
 
-	// Allow overriding remote address via environment variable
+	// Allow overriding remote address via environment variable or interactive prompt
 	remoteAddrStr := peerAAddress
 	if ifEnv, ok := os.LookupEnv("REMOTE_ADDR"); ok && ifEnv != "" {
 		remoteAddrStr = ifEnv
+	}
+	if isInteractive() {
+		fmt.Printf("Enter remote UDP address for Peer A (current: %s) and press Enter, or leave blank to keep: ", remoteAddrStr)
+		reader := bufio.NewReader(os.Stdin)
+		line, _ := reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line != "" {
+			remoteAddrStr = line
+		}
 	}
 	remoteAddr, err := net.ResolveUDPAddr("udp", remoteAddrStr)
 	if err != nil {
@@ -343,6 +352,15 @@ func preview(s string) string {
 		return s[:64] + "..."
 	}
 	return s
+}
+
+// isInteractive returns true if stdin appears to be a terminal
+func isInteractive() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
 func printRecvProgress(label string, received, total int64, start time.Time) {
