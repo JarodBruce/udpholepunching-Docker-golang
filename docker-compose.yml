@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  peer-a:
+    build: ./peer-a
+    cap_add:
+      - NET_ADMIN
+    networks:
+      p2p-net:
+        ipv4_address: 172.29.1.1
+    tty: true
+
+  peer-b:
+    build: ./peer-b
+    cap_add:
+      - NET_ADMIN
+    networks:
+      p2p-net:
+        ipv4_address: 172.29.1.2
+    tty: true
+
+networks:
+  p2p-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16
