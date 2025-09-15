@@ -77,9 +77,12 @@ func main() {
 		var total int64 = -1
 		var received int64
 		var start time.Time
+		// Determine output directory for received files.
+		// If RECV_DIR is not set, default to a local "data" folder
+		// within the current working directory.
 		outDirBase := os.Getenv("RECV_DIR")
 		if outDirBase == "" {
-			outDirBase = "/data/out"
+			outDirBase = "data"
 		}
 		outDir := outDirBase
 
