@@ -33,53 +33,26 @@ const (
 )
 
 func main() {
-	// Resolve local and remote addresses
-	bindAddr := defaultLocal
-	if v := os.Getenv("LOCAL_ADDR"); v != "" {
-		bindAddr = v
-	} else if v := os.Getenv("LOCAL_PORT"); v != "" {
-		bindAddr = ":" + v
-	}
-	// Optional: bind only to localhost to avoid Windows firewall prompts
-	if lb := os.Getenv("BIND_LOCALHOST_ONLY"); lb == "1" || strings.EqualFold(lb, "true") {
-		// If user specified a host already, keep it; otherwise force 127.0.0.1
-		if strings.HasPrefix(bindAddr, ":") {
-			bindAddr = "127.0.0.1" + bindAddr
-		}
-	} else {
-		// Default to IPv4 for Docker networks unless explicitly binding to IPv6
-		if bindAddr == ":8080" {
-			bindAddr = "0.0.0.0:8080"
-		}
-	}
-	localAddr, err := net.ResolveUDPAddr("udp", bindAddr)
-	if err != nil {
-		log.Fatalf("Failed to resolve local address: %v", err)
-	}
+	serverIP := "127.0.0.1"
+	serverPort := "10001"
 
-	// Allow overriding remote address via environment variable
-	remoteAddrStr := peerBAddress
-	if ifEnv, ok := os.LookupEnv("REMOTE_ADDR"); ok && ifEnv != "" {
-		remoteAddrStr = ifEnv
-	}
-
-	remoteAddr, err := net.ResolveUDPAddr("udp", remoteAddrStr)
+	serverAddr, err := net.ResolveUDPAddr("udp", serverIP+":"+serverPort)
 	if err != nil {
-		log.Fatalf("Failed to resolve remote address: %v", err)
+		log.Fatalf("Failed to resolve server address: %v", err)
 	}
 
 	// Listen on the local UDP port
-	conn, err := net.ListenUDP("udp", localAddr)
+	conn, err := net.ListenUDP("udp", serverAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen on UDP port: %v", err)
 	}
 	defer conn.Close()
 
 	fmt.Printf("Peer A listening on %s\n", conn.LocalAddr().String())
-	fmt.Printf("Will send messages to Peer B at %s\n", remoteAddr.String())
+	fmt.Printf("Will send messages to Peer B at %s\n", serverAddr.String())
 
 	// Start punching to create/refresh NAT bindings
-	punch(conn, remoteAddr)
+	punch(conn, serverAddr)
 
 	// Prepare WebRTC peer connection
 	config := webrtc.Configuration{
@@ -181,11 +154,11 @@ func main() {
 
 	// Send session ID first via UDP
 	sid := uuid.NewString()
-	mustWriteUDP(conn, remoteAddr, fmt.Sprintf("ID:%s", sid))
+	mustWriteUDP(conn, serverAddr, fmt.Sprintf("ID:%s", sid))
 	fmt.Printf("Peer A: Sent session ID %s\n", sid)
 
 	// Send the OFFER via UDP
-	mustWriteUDP(conn, remoteAddr, "OFFER:"+encOffer)
+	mustWriteUDP(conn, serverAddr, "OFFER:"+encOffer)
 	fmt.Println("Peer A: Sent OFFER via UDP")
 
 	// Wait for ANSWER via UDP and apply
