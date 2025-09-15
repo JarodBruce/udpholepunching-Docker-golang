@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/webrtc/v3"
@@ -28,6 +30,12 @@ func main() {
 		bindAddr = v
 	} else if v := os.Getenv("LOCAL_PORT"); v != "" {
 		bindAddr = ":" + v
+	}
+	// Optional: bind only to localhost to avoid Windows firewall prompts
+	if lb := os.Getenv("BIND_LOCALHOST_ONLY"); lb == "1" || strings.EqualFold(lb, "true") {
+		if strings.HasPrefix(bindAddr, ":") {
+			bindAddr = "127.0.0.1" + bindAddr
+		}
 	}
 	localAddr, err := net.ResolveUDPAddr("udp", bindAddr)
 	if err != nil {
@@ -69,22 +77,29 @@ func main() {
 	}
 	defer pc.Close()
 
+	// Shared receive state across channels
+	var recvTotal int64
+	var totalExpected int64 = -1
+	// filePath removed (not used)
+	var file *os.File
+	var start time.Time
+	var initOnce sync.Once
+	var closeOnce sync.Once
+	var multiMode bool
+	// Determine output directory for received files
+	outDirBase := os.Getenv("RECV_DIR")
+	if outDirBase == "" {
+		outDirBase = "data"
+	}
+	outDir := outDirBase
+
 	// Handle incoming datachannel with optional file receive
 	pc.OnDataChannel(func(d *webrtc.DataChannel) {
 		fmt.Printf("Peer B: New DataChannel %s\n", d.Label())
-		var file *os.File
-		var writer *bufio.Writer
-		var total int64 = -1
-		var received int64
-		var start time.Time
-		// Determine output directory for received files.
-		// If RECV_DIR is not set, default to a local "data" folder
-		// within the current working directory.
-		outDirBase := os.Getenv("RECV_DIR")
-		if outDirBase == "" {
-			outDirBase = "data"
-		}
-		outDir := outDirBase
+		// per-channel header state for v2 frames
+		var haveHeader bool
+		var hdrOff uint64
+		var hdrLen uint32
 
 		d.OnOpen(func() {
 			fmt.Println("Peer B: DataChannel open. Waiting for metadata...")
@@ -93,51 +108,51 @@ func main() {
 				outDir = outDirBase + "_dir"
 			}
 			_ = os.MkdirAll(outDir, 0755)
-			// send a greeting too (harmless)
 			_ = d.SendText("hello from B")
 		})
 
 		d.OnClose(func() {
-			fmt.Println("Peer B: DataChannel closed")
-			if writer != nil {
-				_ = writer.Flush()
-			}
-			if file != nil {
-				_ = file.Close()
-			}
+			fmt.Printf("Peer B: DataChannel %s closed\n", d.Label())
 		})
 
 		d.OnMessage(func(msg webrtc.DataChannelMessage) {
 			if msg.IsString {
 				// Expect metadata as JSON
 				var meta struct {
-					Name string `json:"name"`
-					Size int64  `json:"size"`
-					Ts   int64  `json:"ts"`
-					Ver  int    `json:"ver"`
+					Name     string `json:"name"`
+					Size     int64  `json:"size"`
+					Ts       int64  `json:"ts"`
+					Ver      int    `json:"ver"`
+					Channels int    `json:"channels"`
 				}
 				if err := json.Unmarshal(msg.Data, &meta); err == nil && meta.Name != "" {
-					total = meta.Size
-					if fi, err := os.Stat(outDir); err == nil && !fi.IsDir() {
-						outDir = outDirBase + "_dir"
-					}
-					_ = os.MkdirAll(outDir, 0755)
-					safeName := filepath.Base(meta.Name)
-					if safeName == "." || safeName == "" {
-						safeName = fmt.Sprintf("received_%d.bin", time.Now().Unix())
-					}
-					fp := filepath.Join(outDir, safeName)
-					f, openErr := os.OpenFile(fp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-					if openErr != nil {
-						log.Printf("Peer B: open file error: %v", openErr)
-						return
-					}
-					file = f
-					writer = bufio.NewWriterSize(file, 1*1024*1024)
-					fmt.Printf("Peer B: Metadata received. Name=%s Size=%d bytes -> %s\n", safeName, meta.Size, fp)
+					initOnce.Do(func() {
+						totalExpected = meta.Size
+						multiMode = meta.Ver >= 2 && meta.Channels > 1
+						safeName := filepath.Base(meta.Name)
+						if safeName == "." || safeName == "" {
+							safeName = fmt.Sprintf("received_%d.bin", time.Now().Unix())
+						}
+						fp := filepath.Join(outDir, safeName)
+						f, openErr := os.OpenFile(fp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+						if openErr != nil {
+							log.Printf("Peer B: open file error: %v", openErr)
+							return
+						}
+						file = f
+						if multiMode && totalExpected > 0 {
+							// Pre-allocate for random writes
+							if err := file.Truncate(totalExpected); err != nil {
+								log.Printf("Peer B: truncate error: %v", err)
+							}
+						}
+						fmt.Printf("Peer B: Metadata received. Name=%s Size=%d bytes -> %s (channels=%d, ver=%d)\n", safeName, meta.Size, fp, meta.Channels, meta.Ver)
+						// Tell sender we're ready for v2
+						_ = d.SendText("READY")
+					})
 					return
 				}
-				fmt.Println("Peer B: Unexpected string message, ignoring.")
+				// other text messages ignored
 				return
 			}
 
@@ -145,26 +160,73 @@ func main() {
 				fmt.Println("Peer B: Error: file not open yet.")
 				return
 			}
-			n, werr := writer.Write(msg.Data)
-			if werr != nil {
-				log.Printf("Peer B: write error: %v", werr)
-				return
-			}
-			received += int64(n)
-			printRecvProgress(d.Label(), received, total, start)
 
-			if total > 0 && received >= total {
-				fmt.Println("\nPeer B: File received completely. Closing...")
-				if writer != nil {
-					_ = writer.Flush()
+			if multiMode {
+				// Expect header then payload
+				b := msg.Data
+				if !haveHeader {
+					if len(b) < 12 {
+						log.Printf("Peer B: header too small on %s: %d", d.Label(), len(b))
+						return
+					}
+					hdrOff = binary.LittleEndian.Uint64(b[0:8])
+					hdrLen = binary.LittleEndian.Uint32(b[8:12])
+					// if there's inline payload as well
+					if len(b) > 12 {
+						payload := b[12:]
+						if int(hdrLen) != len(payload) {
+							log.Printf("Peer B: payload length mismatch: got %d expect %d", len(payload), hdrLen)
+						}
+						if _, err := file.WriteAt(payload, int64(hdrOff)); err != nil {
+							log.Printf("Peer B: writeAt error: %v", err)
+							return
+						}
+						atomic.AddInt64(&recvTotal, int64(len(payload)))
+						printRecvProgress("ALL", atomic.LoadInt64(&recvTotal), totalExpected, start)
+						haveHeader = false
+						return
+					}
+					haveHeader = true
+					return
 				}
-				if file != nil {
-					_ = file.Close()
-					file = nil
+				// have header: this is payload
+				if int(hdrLen) != len(b) {
+					// best effort: write what we received
+					// In practice sender sends exact sizes
 				}
-				// Close DC and PC to terminate
-				_ = d.Close()
-				_ = pc.Close()
+				if _, err := file.WriteAt(b, int64(hdrOff)); err != nil {
+					log.Printf("Peer B: writeAt error: %v", err)
+					return
+				}
+				atomic.AddInt64(&recvTotal, int64(len(b)))
+				printRecvProgress("ALL", atomic.LoadInt64(&recvTotal), totalExpected, start)
+				haveHeader = false
+			} else {
+				// v1 sequential receive (single channel)
+				// keep a simple buffered writer in this branch
+				// open a buffered writer lazily per-channel
+				// (use a local writer only on the first channel that writes)
+				// Simple approach: write directly as append
+				n, werr := file.Write(msg.Data)
+				if werr != nil {
+					log.Printf("Peer B: write error: %v", werr)
+					return
+				}
+				atomic.AddInt64(&recvTotal, int64(n))
+				printRecvProgress(d.Label(), atomic.LoadInt64(&recvTotal), totalExpected, start)
+			}
+
+			// completion check
+			if totalExpected > 0 && atomic.LoadInt64(&recvTotal) >= totalExpected {
+				closeOnce.Do(func() {
+					fmt.Println("\nPeer B: File received completely. Closing...")
+					if file != nil {
+						_ = file.Close()
+						file = nil
+					}
+					_ = d.Close()
+					_ = pc.Close()
+				})
 			}
 		})
 	})

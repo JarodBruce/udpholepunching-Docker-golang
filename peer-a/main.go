@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,7 +11,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +39,13 @@ func main() {
 		bindAddr = v
 	} else if v := os.Getenv("LOCAL_PORT"); v != "" {
 		bindAddr = ":" + v
+	}
+	// Optional: bind only to localhost to avoid Windows firewall prompts
+	if lb := os.Getenv("BIND_LOCALHOST_ONLY"); lb == "1" || strings.EqualFold(lb, "true") {
+		// If user specified a host already, keep it; otherwise force 127.0.0.1
+		if strings.HasPrefix(bindAddr, ":") {
+			bindAddr = "127.0.0.1" + bindAddr
+		}
 	}
 	localAddr, err := net.ResolveUDPAddr("udp", bindAddr)
 	if err != nil {
@@ -77,59 +88,76 @@ func main() {
 	}
 	defer pc.Close()
 
-	// Create a datachannel and send a hello or a file when open
-	dc, err := pc.CreateDataChannel("p2p", nil)
-	if err != nil {
-		log.Fatalf("Peer A: create datachannel: %v", err)
+	// Multi-connection: create N data channels and send in parallel
+	channels := 4
+	if v := os.Getenv("CHANNELS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			channels = n
+		}
 	}
-	dc.OnOpen(func() {
-		var sendPath string
-		if len(os.Args) > 1 {
-			sendPath = os.Args[1]
+	var dcs []*webrtc.DataChannel
+	dcs = make([]*webrtc.DataChannel, 0, channels)
+	var metaOnce sync.Once
+	readyCh := make(chan struct{}) // signaled by B after it prepares file
+	var readyOnce sync.Once
+	// capture sendPath early
+	var sendPath string
+	if len(os.Args) > 1 {
+		sendPath = os.Args[1]
+	}
+	// Pre-validate file if provided
+	var fileInfo os.FileInfo
+	var fileErr error
+	if sendPath != "" {
+		fileInfo, fileErr = os.Stat(sendPath)
+		if fileErr != nil || fileInfo.IsDir() {
+			fmt.Printf("Peer A: file arg invalid: %v\n", fileErr)
+			sendPath = ""
 		}
-		if sendPath == "" {
-			fmt.Println("Peer A: DataChannel open -> sending greeting (no file arg)")
-			_ = dc.SendText("hello from A")
-			return
+	}
+	for i := 0; i < channels; i++ {
+		label := "p2p-" + strconv.Itoa(i)
+		dc, err := pc.CreateDataChannel(label, &webrtc.DataChannelInit{ /* defaults */ })
+		if err != nil {
+			log.Fatalf("Peer A: create datachannel %s: %v", label, err)
 		}
-		// normalize path and check
-		if fi, err := os.Stat(sendPath); err != nil || fi.IsDir() {
-			fmt.Printf("Peer A: file arg invalid: %v\n", err)
-			_ = dc.SendText("hello from A (file missing)")
-			return
-		}
+		dcs = append(dcs, dc)
 
-		// Send metadata
-		fi, _ := os.Stat(sendPath)
-		meta := map[string]interface{}{
-			"name": filepath.Base(sendPath),
-			"size": fi.Size(),
-			"ts":   time.Now().Unix(),
-			"ver":  1,
-		}
-		metaBytes, _ := json.Marshal(meta)
-		if err := dc.SendText(string(metaBytes)); err != nil {
-			log.Printf("Peer A: send metadata error: %v", err)
-			return
-		}
-		fmt.Printf("Peer A: Sending file %s (%d bytes)\n", fi.Name(), fi.Size())
-		go func() {
-			if err := sendFile(dc, sendPath, fi.Size()); err != nil {
-				log.Printf("Peer A: sendFile error: %v", err)
+		dc.OnOpen(func() {
+			// Send metadata once when the first channel opens
+			metaOnce.Do(func() {
+				if sendPath == "" {
+					fmt.Println("Peer A: DataChannel open -> sending greeting (no file arg)")
+					_ = dc.SendText("hello from A")
+					return
+				}
+				fi := fileInfo
+				meta := map[string]interface{}{
+					"name": filepath.Base(sendPath),
+					"size": fi.Size(),
+					"ts":   time.Now().Unix(),
+					"ver":  2,
+					"channels": channels,
+				}
+				metaBytes, _ := json.Marshal(meta)
+				if err := dc.SendText(string(metaBytes)); err != nil {
+					log.Printf("Peer A: send metadata error: %v", err)
+					return
+				}
+				fmt.Printf("Peer A: Metadata sent. File %s (%d bytes), channels=%d\n", fi.Name(), fi.Size(), channels)
+			})
+		})
+		dc.OnMessage(func(m webrtc.DataChannelMessage) {
+			if m.IsString {
+				s := string(m.Data)
+				if s == "READY" {
+					readyOnce.Do(func() { close(readyCh) })
+				} else {
+					fmt.Printf("Peer A: got message on %s: %s\n", dc.Label(), s)
+				}
 			}
-			// Give time for last packets to flush, then close DC and PC
-			time.Sleep(500 * time.Millisecond)
-			_ = dc.Close()
-			_ = pc.Close()
-		}()
-	})
-	dc.OnMessage(func(m webrtc.DataChannelMessage) {
-		if m.IsString {
-			fmt.Printf("Peer A: got message: %s\n", string(m.Data))
-		} else {
-			fmt.Printf("Peer A: got %d bytes\n", len(m.Data))
-		}
-	})
+		})
+	}
 
 	// Offerer flow
 	gatheringComplete := webrtc.GatheringCompletePromise(pc)
@@ -170,12 +198,34 @@ func main() {
 		log.Fatalf("Peer A: SetRemoteDescription: %v", err)
 	}
 
+	// Start sending after READY (if any) or small timeout to avoid deadlock if receiver doesn't support READY
+	go func() {
+		if sendPath == "" {
+			return
+		}
+		select {
+		case <-readyCh:
+			// ok
+		case <-time.After(3 * time.Second):
+			// proceed anyway
+		}
+		if err := sendFileMulti(dcs, sendPath, fileInfo.Size()); err != nil {
+			log.Printf("Peer A: sendFileMulti error: %v", err)
+		}
+		time.Sleep(500 * time.Millisecond)
+		_ = pc.Close()
+	}()
+
 	// Keep the process alive until connection finishes
 	done := make(chan struct{})
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		fmt.Printf("Peer A: Connection state -> %s\n", s.String())
 		if s == webrtc.PeerConnectionStateFailed || s == webrtc.PeerConnectionStateDisconnected || s == webrtc.PeerConnectionStateClosed {
-			close(done)
+			select {
+			case <-done:
+			default:
+				close(done)
+			}
 		}
 	})
 
@@ -244,72 +294,7 @@ func preview(s string) string {
 }
 
 // sendFile streams the file to the DataChannel with simple backpressure
-func sendFile(dc *webrtc.DataChannel, filePath string, total int64) error {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	reader := bufio.NewReaderSize(f, 1*1024*1024)
-	buf := make([]byte, chunkSize)
-	var sent int64
-	start := time.Now()
-
-	// Backpressure support
-	lowThreshold := uint64(maxBufferedBytes / 2)
-	dc.SetBufferedAmountLowThreshold(lowThreshold)
-	wake := make(chan struct{}, 1)
-	dc.OnBufferedAmountLow(func() {
-		select {
-		case wake <- struct{}{}:
-		default:
-		}
-	})
-
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	done := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				printSenderProgress(dc.Label(), sent, total, start)
-			case <-done:
-				printSenderProgress(dc.Label(), sent, total, start)
-				fmt.Println()
-				return
-			}
-		}
-	}()
-
-	for {
-		n, rerr := reader.Read(buf)
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			close(done)
-			return rerr
-		}
-
-		// Wait for buffer to drain
-		for dc.BufferedAmount() > maxBufferedBytes {
-			select {
-			case <-wake:
-			case <-time.After(5 * time.Millisecond):
-			}
-		}
-		if err := dc.Send(buf[:n]); err != nil {
-			close(done)
-			return err
-		}
-		sent += int64(n)
-	}
-	close(done)
-	fmt.Println("Peer A: File sent successfully.")
-	return nil
-}
+// legacy single-channel sendFile removed in favor of sendFileMulti
 
 func printSenderProgress(label string, sent, total int64, start time.Time) {
 	elapsed := time.Since(start).Seconds()
@@ -328,4 +313,147 @@ func printSenderProgress(label string, sent, total int64, start time.Time) {
 		etaStr = fmt.Sprintf("ETA %ds", int(eta))
 	}
 	fmt.Printf("\rSender: %s | %6.2f%% | %d/%d bytes | %.2f MB/s | %s", label, pct, sent, total, speed/1024.0/1024.0, etaStr)
+}
+
+// sendFileMulti sends the file across multiple datachannels in parallel using framed chunks.
+// Frame layout: [8 bytes little-endian offset][4 bytes little-endian payload length][payload]
+func sendFileMulti(dcs []*webrtc.DataChannel, filePath string, total int64) error {
+	// Filter only non-nil channels
+	chans := make([]*webrtc.DataChannel, 0, len(dcs))
+	for _, dc := range dcs {
+		if dc != nil {
+			chans = append(chans, dc)
+		}
+	}
+	if len(chans) == 0 {
+		return fmt.Errorf("no datachannels available")
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	reader := bufio.NewReaderSize(f, 2*1024*1024)
+	type chunk struct {
+		off uint64
+		n   int
+		buf []byte
+	}
+	chunks := make(chan chunk, 1024)
+	var readErr error
+	// reader goroutine
+	go func() {
+		var offset uint64
+		for {
+			buf := make([]byte, chunkSize)
+			n, err := io.ReadFull(reader, buf)
+			if err == io.ErrUnexpectedEOF {
+				// last partial chunk
+				if n > 0 {
+					chunks <- chunk{off: offset, n: n, buf: buf[:n]}
+					offset += uint64(n)
+				}
+				break
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil && err != io.ErrUnexpectedEOF {
+				readErr = err
+				break
+			}
+			chunks <- chunk{off: offset, n: n, buf: buf[:n]}
+			offset += uint64(n)
+		}
+		close(chunks)
+	}()
+
+	// progress reporter
+	var sent int64
+	start := time.Now()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	stopProg := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				printSenderProgress("multi", atomic.LoadInt64(&sent), total, start)
+			case <-stopProg:
+				printSenderProgress("multi", atomic.LoadInt64(&sent), total, start)
+				fmt.Println()
+				return
+			}
+		}
+	}()
+
+	// per-channel backpressure helpers
+	type worker struct {
+		dc   *webrtc.DataChannel
+		wake chan struct{}
+	}
+	ws := make([]worker, len(chans))
+	for i, dc := range chans {
+		low := uint64(maxBufferedBytes / 2)
+		dc.SetBufferedAmountLowThreshold(low)
+		wch := make(chan struct{}, 1)
+		dc.OnBufferedAmountLow(func() {
+			select {
+			case wch <- struct{}{}:
+			default:
+			}
+		})
+		ws[i] = worker{dc: dc, wake: wch}
+	}
+
+	// start workers
+	var wg sync.WaitGroup
+	wg.Add(len(ws))
+	for _, w := range ws {
+		go func(w worker) {
+			defer wg.Done()
+			// Wait until open
+			openCh := make(chan struct{})
+			w.dc.OnOpen(func() { close(openCh) })
+			select {
+			case <-openCh:
+			case <-time.After(10 * time.Second):
+				// proceed anyway; channel may already be open before handler set
+			}
+			// consume chunks
+			for c := range chunks {
+				// build frame
+				header := make([]byte, 12)
+				binary.LittleEndian.PutUint64(header[0:8], c.off)
+				binary.LittleEndian.PutUint32(header[8:12], uint32(c.n))
+				// backpressure
+				for w.dc.BufferedAmount() > maxBufferedBytes {
+					select {
+					case <-w.wake:
+					case <-time.After(5 * time.Millisecond):
+					}
+				}
+				// send header
+				if err := w.dc.Send(header); err != nil {
+					log.Printf("Peer A: send header error on %s: %v", w.dc.Label(), err)
+					return
+				}
+				// send payload
+				if err := w.dc.Send(c.buf[:c.n]); err != nil {
+					log.Printf("Peer A: send payload error on %s: %v", w.dc.Label(), err)
+					return
+				}
+				atomic.AddInt64(&sent, int64(c.n))
+			}
+		}(w)
+	}
+	wg.Wait()
+	close(stopProg)
+	if readErr != nil {
+		return readErr
+	}
+	fmt.Println("Peer A: File sent successfully (multi).")
+	return nil
 }
