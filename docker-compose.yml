@@ -10,7 +10,8 @@ services:
         ipv4_address: 172.29.1.1
     environment:
       - REMOTE_ADDR=172.29.1.2:8080
-      - SEND_FILE=/data/big.txt
+      # You can override the default CMD file here, e.g. send another file:
+      # command: ["/data/another.txt"]
     tty: true
     volumes:
       - ./data:/data
@@ -25,7 +26,6 @@ services:
     tty: true
     environment:
       - REMOTE_ADDR=172.29.1.1:8080
-      - RECV_DIR=/data/received
     volumes:
       - ./data:/data
 

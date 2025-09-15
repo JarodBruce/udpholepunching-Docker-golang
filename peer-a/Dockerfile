@@ -23,3 +23,4 @@ RUN go build -o /usr/local/bin/peer main.go
 
 # Set the entrypoint
 ENTRYPOINT ["./entrypoint.sh"]
+CMD ["/data/big.txt"]

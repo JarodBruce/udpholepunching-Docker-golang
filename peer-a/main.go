@@ -77,15 +77,18 @@ func main() {
 		log.Fatalf("Peer A: create datachannel: %v", err)
 	}
 	dc.OnOpen(func() {
-		sendPath := os.Getenv("SEND_FILE")
+		var sendPath string
+		if len(os.Args) > 1 {
+			sendPath = os.Args[1]
+		}
 		if sendPath == "" {
-			fmt.Println("Peer A: DataChannel open -> sending greeting (no SEND_FILE)")
+			fmt.Println("Peer A: DataChannel open -> sending greeting (no file arg)")
 			_ = dc.SendText("hello from A")
 			return
 		}
 		// normalize path and check
 		if fi, err := os.Stat(sendPath); err != nil || fi.IsDir() {
-			fmt.Printf("Peer A: SEND_FILE invalid: %v\n", err)
+			fmt.Printf("Peer A: file arg invalid: %v\n", err)
 			_ = dc.SendText("hello from A (file missing)")
 			return
 		}

@@ -18,4 +18,4 @@ iptables -L
 
 # Execute the main application.
 echo "Starting peer application"
-/usr/local/bin/peer
+exec /usr/local/bin/peer "$@"
