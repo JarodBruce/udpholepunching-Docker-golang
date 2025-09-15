@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"runtime"
+
 	"github.com/google/uuid"
 	"github.com/pion/webrtc/v3"
 )
@@ -40,7 +42,14 @@ func main() {
 		bindAddr = ":" + v
 	}
 	// Optional: bind only to localhost to avoid Windows firewall prompts
-	if lb := os.Getenv("BIND_LOCALHOST_ONLY"); lb == "1" || strings.EqualFold(lb, "true") {
+	// On Windows, default to localhost unless explicitly disabled
+	enableLocalhostOnly := false
+	if lb, ok := os.LookupEnv("BIND_LOCALHOST_ONLY"); ok {
+		enableLocalhostOnly = (lb == "1" || strings.EqualFold(lb, "true"))
+	} else if runtime.GOOS == "windows" {
+		enableLocalhostOnly = true
+	}
+	if enableLocalhostOnly {
 		// If user specified a host already, keep it; otherwise force 127.0.0.1
 		if strings.HasPrefix(bindAddr, ":") {
 			bindAddr = "127.0.0.1" + bindAddr
@@ -83,7 +92,20 @@ func main() {
 	fmt.Printf("Will send messages to Peer B at %s\n", remoteAddr.String())
 
 	// Start punching to create/refresh NAT bindings
-	punch(conn, remoteAddr)
+	// On Windows, disable punching by default to reduce AV heuristics
+	enablePunch := true
+	if dp, ok := os.LookupEnv("DISABLE_PUNCH"); ok {
+		if dp == "1" || strings.EqualFold(dp, "true") {
+			enablePunch = false
+		}
+	} else if runtime.GOOS == "windows" {
+		enablePunch = false
+	}
+	if enablePunch {
+		punch(conn, remoteAddr)
+	} else {
+		fmt.Println("Peer A: UDP punching disabled (DISABLE_PUNCH or Windows default)")
+	}
 
 	// Prepare WebRTC peer connection
 	config := webrtc.Configuration{
