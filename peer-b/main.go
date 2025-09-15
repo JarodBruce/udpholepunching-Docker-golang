@@ -56,7 +56,7 @@ func main() {
 	if ifEnv, ok := os.LookupEnv("REMOTE_ADDR"); ok && ifEnv != "" {
 		remoteAddrStr = ifEnv
 	}
-	if isInteractive() {
+	if isInteractive() && !isPromptDisabled() {
 		fmt.Printf("Enter remote UDP address for Peer A (current: %s) and press Enter, or leave blank to keep: ", remoteAddrStr)
 		reader := bufio.NewReader(os.Stdin)
 		line, _ := reader.ReadString('\n')
@@ -383,6 +383,14 @@ func isInteractive() bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// isPromptDisabled returns true if prompts should be skipped
+func isPromptDisabled() bool {
+	if pd, ok := os.LookupEnv("PROMPT_DISABLE"); ok {
+		return pd == "1" || strings.EqualFold(pd, "true")
+	}
+	return false
 }
 
 func printRecvProgress(label string, received, total int64, start time.Time) {

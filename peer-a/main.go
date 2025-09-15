@@ -65,8 +65,8 @@ func main() {
 	if ifEnv, ok := os.LookupEnv("REMOTE_ADDR"); ok && ifEnv != "" {
 		remoteAddrStr = ifEnv
 	}
-	// Interactive prompt if connected to TTY
-	if isInteractive() {
+	// Interactive prompt if connected to TTY and not disabled
+	if isInteractive() && !isPromptDisabled() {
 		fmt.Printf("Enter remote UDP address for Peer B (current: %s) and press Enter, or leave blank to keep: ", remoteAddrStr)
 		reader := bufio.NewReader(os.Stdin)
 		line, _ := reader.ReadString('\n')
@@ -331,6 +331,14 @@ func isInteractive() bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// isPromptDisabled returns true if prompts should be skipped
+func isPromptDisabled() bool {
+	if pd, ok := os.LookupEnv("PROMPT_DISABLE"); ok {
+		return pd == "1" || strings.EqualFold(pd, "true")
+	}
+	return false
 }
 
 // sendFile streams the file to the DataChannel with simple backpressure
