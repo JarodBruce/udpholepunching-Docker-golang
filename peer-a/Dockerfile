@@ -21,6 +21,9 @@ RUN chmod +x entrypoint.sh
 # Build the Go application
 RUN go build -o /usr/local/bin/peer main.go
 
+# Expose the port
+EXPOSE 8080/udp
+
 # Set the entrypoint
 ENTRYPOINT ["./entrypoint.sh"]
 CMD ["/data/big.txt"]

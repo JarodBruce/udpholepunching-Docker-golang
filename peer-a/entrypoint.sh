@@ -1,19 +1,24 @@
 #!/bin/sh
+set -e
 
-# Set the default policy for the INPUT chain to DROP.
-# This means that any incoming packet that does not match a rule will be dropped.
-echo "Setting default INPUT policy to DROP"
-iptables -P INPUT DROP
+# Optional: wait for the other peer to be resolvable
+if [ -n "$REMOTE_ADDR" ]; then
+    OTHER_PEER=$(echo "$REMOTE_ADDR" | cut -d: -f1)
+    echo "Waiting for $OTHER_PEER to be ready..."
+    # Simple loop to wait for DNS resolution
+    for i in 1 2 3 4 5; do
+        if nslookup "$OTHER_PEER" >/dev/null 2>&1; then
+            echo "$OTHER_PEER is resolvable."
+            break
+        fi
+        echo "Attempt $i: $OTHER_PEER not found, sleeping..."
+        sleep 2
+    done
+fi
 
-# Allow traffic on the loopback interface for local communication.
-iptables -A INPUT -i lo -j ACCEPT
-
-# Allow established and related incoming connections.
-# This is crucial for the return traffic of the UDP hole punching to be accepted.
-iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-
-# Allow NEW UDP connections on port 8080 for initial hole punching
-iptables -A INPUT -p udp --dport 8080 -m conntrack --ctstate NEW -j ACCEPT
+# Set the default policy for the INPUT chain to ACCEPT.
+echo "Setting default INPUT policy to ACCEPT"
+iptables -P INPUT ACCEPT
 
 # List the current iptables rules for verification.
 echo "Current iptables rules:"

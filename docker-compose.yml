@@ -4,38 +4,36 @@ services:
     cap_add:
       - NET_ADMIN
     networks:
-      p2p-net:
-        ipv4_address: 172.29.1.1
+      - p2p-net
     environment:
-      - REMOTE_ADDR=172.29.1.2:8080
+      - REMOTE_ADDR=peer-b:8080
       - PROMPT_DISABLE=1
       - BIND_LOCALHOST_ONLY=0
-      - DISABLE_PUNCH=0
-      # You can override the default CMD file here, e.g. send another file:
-      # command: ["/data/another.txt"]
+      - DISABLE_PUNCH=1
+    # You can override the default CMD file here, e.g. send another file:
+    # command: ["/peer-a", "/data/another.txt"]
     tty: true
     volumes:
       - ./data:/data
+    depends_on:
+      - peer-b
 
   peer-b:
     build: ./peer-b
     cap_add:
       - NET_ADMIN
     networks:
-      p2p-net:
-        ipv4_address: 172.29.1.2
+      - p2p-net
     tty: true
     environment:
-      - REMOTE_ADDR=172.29.1.1:8080
+      - REMOTE_ADDR=peer-a:8080
       - PROMPT_DISABLE=1
       - BIND_LOCALHOST_ONLY=0
-      - DISABLE_PUNCH=0
+      - DISABLE_PUNCH=1
     volumes:
       - ./data:/data
 
 networks:
   p2p-net:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.29.0.0/16
+

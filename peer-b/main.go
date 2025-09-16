@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	// peerAAddress = "172.29.1.1:8080"
-	peerAAddress = "10.40.236.145:8080"
+	peerAAddress = "172.31.0.1:8080"
+	// peerAAddress = "10.40.236.145:8080"
 	defaultLocal = ":8080"
 )
 
@@ -42,7 +42,7 @@ func main() {
 			bindAddr = "0.0.0.0:8080"
 		}
 	}
-	localAddr, err := net.ResolveUDPAddr("udp", bindAddr)
+	localAddr, err := net.ResolveUDPAddr("udp4", bindAddr)
 	if err != nil {
 		log.Fatalf("Failed to resolve local address: %v", err)
 	}
@@ -52,13 +52,13 @@ func main() {
 	if ifEnv, ok := os.LookupEnv("REMOTE_ADDR"); ok && ifEnv != "" {
 		remoteAddrStr = ifEnv
 	}
-	remoteAddr, err := net.ResolveUDPAddr("udp", remoteAddrStr)
+	remoteAddr, err := net.ResolveUDPAddr("udp4", remoteAddrStr)
 	if err != nil {
 		log.Fatalf("Failed to resolve remote address: %v", err)
 	}
 
 	// Listen on the local UDP port
-	conn, err := net.ListenUDP("udp", localAddr)
+	conn, err := net.ListenUDP("udp4", localAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen on UDP port: %v", err)
 	}
@@ -68,7 +68,7 @@ func main() {
 	fmt.Printf("Will send messages to Peer A at %s\n", remoteAddr.String())
 
 	// Start punching to create/refresh NAT bindings
-	punch(conn, remoteAddr)
+	// punch(conn, remoteAddr)
 
 	// Prepare WebRTC peer connection (Answerer)
 	config := webrtc.Configuration{
