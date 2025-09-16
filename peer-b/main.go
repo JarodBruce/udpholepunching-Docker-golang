@@ -101,55 +101,31 @@ func main() {
 	// Handle incoming datachannel with optional file receive
 	pc.OnDataChannel(func(d *webrtc.DataChannel) {
 		fmt.Printf("Peer B: New DataChannel %s\n", d.Label())
-		// per-channel header state for v2 frames
-		var haveHeader bool
-		var hdrOff uint64
-		var hdrLen uint32
+		// per-channel header state for v2 frames (removed)
 		// Add buffering for data received before metadata
 		var dataBuffer []webrtc.DataChannelMessage
 
 		// Helper function to process data messages
 		processDataMessage := func(msg webrtc.DataChannelMessage, label string) {
 			if multiMode {
-				// Expect header then payload
 				b := msg.Data
-				if !haveHeader {
-					if len(b) < 12 {
-						log.Printf("Peer B: header too small on %s: %d", label, len(b))
-						return
-					}
-					hdrOff = binary.LittleEndian.Uint64(b[0:8])
-					hdrLen = binary.LittleEndian.Uint32(b[8:12])
-					// if there's inline payload as well
-					if len(b) > 12 {
-						payload := b[12:]
-						if int(hdrLen) != len(payload) {
-							log.Printf("Peer B: payload length mismatch: got %d expect %d", len(payload), hdrLen)
-						}
-						if _, err := file.WriteAt(payload, int64(hdrOff)); err != nil {
-							log.Printf("Peer B: writeAt error: %v", err)
-							return
-						}
-						atomic.AddInt64(&recvTotal, int64(len(payload)))
-						printRecvProgress("ALL", atomic.LoadInt64(&recvTotal), totalExpected, start)
-						haveHeader = false
-						return
-					}
-					haveHeader = true
+				if len(b) < 12 {
+					log.Printf("Peer B: frame too small on %s: %d", label, len(b))
 					return
 				}
-				// have header: this is payload
-				if int(hdrLen) != len(b) {
-					// best effort: write what we received
-					// In practice sender sends exact sizes
+				hdrOff := binary.LittleEndian.Uint64(b[0:8])
+				hdrLen := binary.LittleEndian.Uint32(b[8:12])
+				payload := b[12:]
+				if int(hdrLen) != len(payload) {
+					log.Printf("Peer B: payload length mismatch: got %d expect %d", len(payload), hdrLen)
+					// still write what we got
 				}
-				if _, err := file.WriteAt(b, int64(hdrOff)); err != nil {
+				if _, err := file.WriteAt(payload, int64(hdrOff)); err != nil {
 					log.Printf("Peer B: writeAt error: %v", err)
 					return
 				}
-				atomic.AddInt64(&recvTotal, int64(len(b)))
+				atomic.AddInt64(&recvTotal, int64(len(payload)))
 				printRecvProgress("ALL", atomic.LoadInt64(&recvTotal), totalExpected, start)
-				haveHeader = false
 			} else {
 				// v1 sequential receive (single channel)
 				n, werr := file.Write(msg.Data)

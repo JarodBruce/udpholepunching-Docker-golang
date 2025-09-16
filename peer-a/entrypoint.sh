@@ -16,6 +16,9 @@ if [ -n "$REMOTE_ADDR" ]; then
     done
 fi
 
+# Add a small delay to ensure peer-b is ready to receive
+sleep 2
+
 # Set the default policy for the INPUT chain to ACCEPT.
 echo "Setting default INPUT policy to ACCEPT"
 iptables -P INPUT ACCEPT

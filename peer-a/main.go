@@ -28,7 +28,7 @@ const (
 )
 
 const (
-	chunkSize        = 16384            // 16KB
+	chunkSize        = 65500            // 64KB - headers
 	maxBufferedBytes = 16 * 1024 * 1024 // 16MB
 )
 
@@ -429,9 +429,10 @@ func sendFileMulti(dcs []*webrtc.DataChannel, filePath string, total int64) erro
 			// consume chunks
 			for c := range chunks {
 				// build frame
-				header := make([]byte, 12)
-				binary.LittleEndian.PutUint64(header[0:8], c.off)
-				binary.LittleEndian.PutUint32(header[8:12], uint32(c.n))
+				frame := make([]byte, 12+c.n)
+				binary.LittleEndian.PutUint64(frame[0:8], c.off)
+				binary.LittleEndian.PutUint32(frame[8:12], uint32(c.n))
+				copy(frame[12:], c.buf[:c.n])
 				// backpressure
 				for w.dc.BufferedAmount() > maxBufferedBytes {
 					select {
@@ -439,14 +440,9 @@ func sendFileMulti(dcs []*webrtc.DataChannel, filePath string, total int64) erro
 					case <-time.After(5 * time.Millisecond):
 					}
 				}
-				// send header
-				if err := w.dc.Send(header); err != nil {
-					log.Printf("Peer A: send header error on %s: %v", w.dc.Label(), err)
-					return
-				}
-				// send payload
-				if err := w.dc.Send(c.buf[:c.n]); err != nil {
-					log.Printf("Peer A: send payload error on %s: %v", w.dc.Label(), err)
+				// send frame
+				if err := w.dc.Send(frame); err != nil {
+					log.Printf("Peer A: send frame error on %s: %v", w.dc.Label(), err)
 					return
 				}
 				atomic.AddInt64(&sent, int64(c.n))

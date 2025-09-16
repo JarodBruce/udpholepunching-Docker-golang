@@ -24,5 +24,7 @@ RUN go build -o /usr/local/bin/peer main.go
 # Expose the port
 EXPOSE 8080/udp
 
+ENV RECV_DIR /data/received
+
 # Set the entrypoint
 ENTRYPOINT ["./entrypoint.sh"]
